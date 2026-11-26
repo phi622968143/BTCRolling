@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BTC 滾倉模擬練習</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#161a22;--mu:#6b7280;--bd:#e3e6ec;--up:#0f9d6e;--dn:#e0443e;--ac:#f7931a;--ln:#3b82f6;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1116;--card:#171b23;--tx:#e8eaef;--mu:#8b93a3;--bd:#262c38;--up:#2dd4a0;--dn:#ff6b64;--ln:#60a5fa;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0e1116;--card:#171b23;--tx:#e8eaef;--mu:#8b93a3;--bd:#262c38;--up:#2dd4a0;--dn:#ff6b64;--ln:#60a5fa;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.5 -apple-system,"PingFang TC","Microsoft JhengHei","Noto Sans TC",sans-serif}
+.w{max-width:960px;margin:0 auto;padding:14px}
+h1{font-size:18px;margin:0 0 2px}.sub{color:var(--mu);font-size:12px;margin-bottom:10px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:10px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
+.s small{display:block;color:var(--mu);font-size:11px}.s b{font-size:16px;font-variant-numeric:tabular-nums}
+.up{color:var(--up)}.dn{color:var(--dn)}
+canvas{width:100%;height:340px;display:block}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0}
+button,select{font:inherit;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:8px;padding:7px 12px;cursor:pointer}
+button:disabled{opacity:.4;cursor:not-allowed}
+.long{background:var(--up);color:#fff;border:0}.short{background:var(--dn);color:#fff;border:0}
+.roll{background:var(--ac);color:#fff;border:0}
+label{color:var(--mu);font-size:12px}
+input[type=range]{vertical-align:middle;width:130px}
+#log{max-height:150px;overflow:auto;font-size:12px;color:var(--mu)}#log div{padding:2px 0;border-bottom:1px dashed var(--bd)}
+.tip{font-size:12px;color:var(--mu)}
+#end{display:none;border-color:var(--ac)}
+</style>
+</head>
+<body>
+<div class="w">
+<h1>₿ BTC 滾倉模擬練習</h1>
+<div class="sub">以 2023/1–2025/11 的真實 BTC 價格錨點重建 4 小時 K 線，打開即自動播放，練習「浮盈加倉」的滾倉打法。僅供學習，非投資建議。</div>
+
+<div class="card stats">
+<div class="s"><small id="tm">時間</small><b id="px">-</b></div>
+<div class="s"><small>淨值 Equity</small><b id="eq">-</b></div>
+<div class="s"><small>餘額</small><b id="bal">-</b></div>
+<div class="s"><small>浮動盈虧</small><b id="up">-</b></div>
+<div class="s"><small>可用保證金</small><b id="av">-</b></div>
+<div class="s"><small>持倉 / 均價</small><b id="ps">空手</b></div>
+<div class="s"><small>強平價</small><b id="lq">-</b></div>
+</div>
+
+<div class="card"><canvas id="cv"></canvas>
+<div class="row">
+<button id="play">▶ 播放</button><button id="step">步進 +1</button>
+<select id="spd"><option value="160">慢</option><option value="70" selected>中</option><option value="25">快</option></select>
+<button id="new">🎲 隨機新局</button><button id="crash">📉 25/10 高點崩跌局</button><button id="bull">🚀 24/11 大漲局</button>
+<span class="tip" id="prog"></span>
+</div></div>
+
+<div class="card">
+<div class="row">
+<label>槓桿 <input type="range" id="lev" min="1" max="20" value="5"> <b id="levv">5x</b></label>
+<label>開倉保證金
+<select id="mp"><option value=".1">10%</option><option value=".25" selected>25%</option><option value=".5">50%</option><option value="1">100%</option></select>（佔餘額）</label>
+<button class="long" id="bl">做多</button><button class="short" id="bs">做空</button>
+</div>
+<div class="row">
+<label>滾倉：用浮盈的</label>
+<button class="roll" data-r=".25">25%</button><button class="roll" data-r=".5">50%</button><button class="roll" data-r="1">100%</button>
+<label>加碼同方向</label>
+<button id="cl">全部平倉</button>
+</div>
+<div class="tip">滾倉重點：只拿「浮盈」當新保證金加倉，本金不再加碼；均價會往現價靠攏，強平價也會因此逼近——順勢放大獲利，但回調時也更容易被洗出場。</div>
+</div>
+
+<div class="card" id="end"><b id="et"></b><div id="eb" class="tip"></div></div>
+<div class="card"><b>交易紀錄</b><div id="log"></div></div>
+<div class="tip">資料說明：錨點為 2023/1–2025/11 各月底收盤與重要高低點（如 2024/3 高點 7.37 萬、2024/8 閃崩 4.9 萬、2025/10 高點 12.6 萬、2025/11 低點 8 萬）的近似值，其中 2025/11/26 約 $90K 有即時查證；錨點之間的 4 小時走勢為依波動度生成的模擬路徑，並非逐筆真實行情。手續費 0.05%，維持保證金率 0.5%。</div>
+</div>
+
+<script>
+// ---- 資料：真實錨點 + 布朗橋插值 ----
+const ANCH=[["2023-01-01",16600],["2023-01-31",23100],["2023-02-28",23150],["2023-03-10",20000],["2023-03-31",28450],["2023-04-14",30400],["2023-04-30",29230],["2023-05-31",27200],["2023-06-30",30470],["2023-07-31",29230],["2023-08-31",25940],["2023-09-30",26970],["2023-10-31",34500],["2023-11-30",37700],["2023-12-31",42260],["2024-01-31",42580],["2024-02-29",61200],["2024-03-14",73700],["2024-03-31",71300],["2024-04-30",60670],["2024-05-31",67500],["2024-06-30",62770],["2024-07-31",64620],["2024-08-05",49000],["2024-08-31",58970],["2024-09-30",63330],["2024-10-31",70290],["2024-11-30",96400],["2024-12-17",106100],["2024-12-31",93400],["2025-01-20",109000],["2025-01-31",102400],["2025-02-28",84350],["2025-03-31",82550],["2025-04-08",76300],["2025-04-30",94170],["2025-05-22",111900],["2025-05-31",104600],["2025-06-30",107100],["2025-07-14",123000],["2025-07-31",115700],["2025-08-14",124000],["2025-08-31",108200],["2025-09-30",114000],["2025-10-06",126200],["2025-10-31",109500],["2025-11-21",80500],["2025-11-26",90000]].map(([t,p])=>[Date.parse(t),p]);
+function rng(s){return()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const R=rng(20261126),G=()=>Math.sqrt(-2*Math.log(R()+1e-12))*Math.cos(6.283185*R());
+const H=4*3600e3,C=[];
+(function(){
+ let prev=ANCH[0][1];
+ for(let i=0;i<ANCH.length-1;i++){
+  const [t0,p0]=ANCH[i],[t1,p1]=ANCH[i+1],n=Math.max(1,Math.round((t1-t0)/H)),sg=0.0085;
+  const w=[0];for(let k=1;k<=n;k++)w.push(w[k-1]+sg*G());
+  for(let k=1;k<=n;k++){
+   const lp=Math.log(p0)+(Math.log(p1)-Math.log(p0))*k/n+(w[k]-k/n*w[n]);
+   const c=Math.exp(lp),o=prev,wk=()=>Math.abs(G())*0.0028;
+   C.push({t:t0+k*H,o,c,h:Math.max(o,c)*(1+wk()),l:Math.min(o,c)*(1-wk())});prev=c;
+  }
+ }
+})();
+
+// ---- 狀態 ----
+const FEE=.0005,MM=.005,W=120,HIST=70,INIT=10000,S=8;
+let idx,sub=8,end,bal,pos,rolls,logs,timer=null,over,peak;
+const $=id=>document.getElementById(id);
+const fm=(x,d=0)=>x.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+function ptf(c,f){const p=c.c>=c.o?[c.o,c.l,c.h,c.c]:[c.o,c.h,c.l,c.c],s=f*3,k=Math.min(2,Math.floor(s));return[p,k,p[k]+(p[k+1]-p[k])*(s-k)]}
+function view(i,b){const c=C[i];if(b>=S)return c;const[p,k,cur]=ptf(c,b/S),v=p.slice(0,k+1).concat(cur);return{t:c.t,o:c.o,c:cur,h:Math.max(...v),l:Math.min(...v)}}
+const price=()=>view(idx,sub).c;
+function upnl(p=price()){return pos?pos.s*(p-pos.avg)*pos.q:0}
+function equity(){return bal+upnl()}
+function used(){return pos?pos.q*pos.avg/pos.lev:0}
+function avail(){return Math.max(0,equity()-used())}
+function liq(){
+ if(!pos)return null;
+ return pos.s>0?(pos.q*pos.avg-bal)/(pos.q*(1-MM)):(bal+pos.q*pos.avg)/(pos.q*(1+MM));
+}
+function log(m){logs.unshift(`<div>${fmt(C[idx].t)} ｜ ${m}</div>`);$("log").innerHTML=logs.slice(0,60).join("")}
+function fmt(t){const d=new Date(t);return `${d.getUTCMonth()+1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2,"0")}:00`}
+
+function start(from){
+ stop();
+ const max=C.length-W-2;
+ const s=from!=null?from:HIST+Math.floor(R()*(max-HIST));
+ idx=s;sub=S;end=Math.min(C.length-1,s+W);bal=INIT;pos=null;rolls=0;logs=[];over=false;peak=INIT;
+ $("end").style.display="none";$("log").innerHTML="";
+ log(`新局開始，初始資金 ${fm(INIT)} USDT`);render();play();
+}
+function stop(){if(timer){clearInterval(timer);timer=null}$("play").textContent="▶ 播放"}
+function play(){
+ if(over)return;
+ if(timer){stop();return}
+ $("play").textContent="⏸ 暫停";
+ timer=setInterval(tick,+$("spd").value);
+}
+function tick(){
+ if(over)return stop();
+ if(sub>=S){idx++;sub=0}sub++;const c=view(idx,sub);
+ if(pos){
+  const lq=liq();
+  if((pos.s>0&&c.l<=lq)||(pos.s<0&&c.h>=lq)){
+   bal=Math.max(0,bal+pos.s*(lq-pos.avg)*pos.q);
+   log(`💥 觸及強平價 ${fm(lq)}，倉位被強制平倉，剩餘 ${fm(bal,2)}`);
+   pos=null;
+   if(bal<1)return finish("💥 爆倉出局");
+  }
+ }
+ peak=Math.max(peak,equity());
+ if(idx>=end&&sub>=S)return finish("⏱ 本局結束");
+ render();
+}
+function finish(t){
+ over=true;stop();
+ if(pos){const f=pos.q*price()*FEE;bal+=upnl()-f;pos=null}
+ const r=(bal/INIT-1)*100;
+ $("end").style.display="block";
+ $("et").textContent=`${t}：最終 ${fm(bal,2)} USDT（${r>=0?"+":""}${r.toFixed(1)}%）`;
+ $("eb").textContent=`滾倉次數 ${rolls} 次，期間淨值高點 ${fm(peak,0)} USDT。可以對照：高點回吐了多少？`;
+ render();
+}
+function open(s){
+ if(over||pos)return;
+ const lev=+$("lev").value,m=bal*+$("mp").value,q=m*lev/price(),f=q*price()*FEE;
+ bal-=f;pos={s,q,avg:price(),lev};
+ log(`${s>0?"做多":"做空"} ${q.toFixed(4)} BTC @ ${fm(price())}，${lev}x，保證金 ${fm(m)}`);render();
+}
+function roll(r){
+ if(over||!pos)return;
+ const u=upnl();if(u<=0)return log("沒有浮盈，不能滾倉");
+ const m=Math.min(u*r,avail());if(m<=1)return log("可用保證金不足");
+ const q=m*pos.lev/price();
+ bal-=q*price()*FEE;
+ pos.avg=(pos.q*pos.avg+q*price())/(pos.q+q);pos.q+=q;rolls++;
+ log(`🔁 滾倉 +${q.toFixed(4)} BTC @ ${fm(price())}（用浮盈 ${fm(m)}），新均價 ${fm(pos.avg)}`);render();
+}
+function closeAll(){
+ if(over||!pos)return;
+ const u=upnl(),f=pos.q*price()*FEE;bal+=u-f;
+ log(`平倉 @ ${fm(price())}，已實現 ${u>=0?"+":""}${fm(u,2)}（手續費 ${fm(f,2)}）`);pos=null;render();
+}
+
+// ---- 繪圖 ----
+const cv=$("cv"),cx=cv.getContext("2d");
+function draw(){
+ const dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+ cv.width=w*dpr;cv.height=h*dpr;cx.setTransform(dpr,0,0,dpr,0,0);cx.clearRect(0,0,w,h);
+ const st=getComputedStyle(document.documentElement),col=n=>st.getPropertyValue(n).trim();
+ const a=Math.max(0,idx-HIST+1),v=C.slice(a,idx);v.push(view(idx,sub));const pr=58;
+ let hi=Math.max(...v.map(x=>x.h)),lo=Math.min(...v.map(x=>x.l));
+ const lq=liq();
+ if(pos){hi=Math.max(hi,pos.avg);lo=Math.min(lo,pos.avg);if(lq>0){hi=Math.max(hi,Math.min(lq,hi*1.15));lo=Math.min(lo,Math.max(lq,lo*.85))}}
+ const pd=(hi-lo)*.06;hi+=pd;lo-=pd;
+ const y=p=>h-8-(p-lo)/(hi-lo)*(h-16),cw=(w-pr)/HIST;
+ cx.font="11px sans-serif";cx.fillStyle=col("--mu");cx.strokeStyle=col("--bd");cx.lineWidth=1;
+ for(let i=0;i<=4;i++){const p=lo+(hi-lo)*i/4,yy=y(p);cx.beginPath();cx.moveTo(0,yy);cx.lineTo(w-pr,yy);cx.stroke();cx.fillText(fm(p),w-pr+4,yy+4)}
+ v.forEach((c,i)=>{
+  const x=i*cw+cw/2,up=c.c>=c.o;cx.strokeStyle=cx.fillStyle=up?col("--up"):col("--dn");
+  cx.beginPath();cx.moveTo(x,y(c.h));cx.lineTo(x,y(c.l));cx.stroke();
+  const t=y(Math.max(c.o,c.c)),b=y(Math.min(c.o,c.c));cx.fillRect(x-cw*.35,t,cw*.7,Math.max(1,b-t));
+ });
+ const line=(p,c,t)=>{if(p<lo||p>hi)return;cx.strokeStyle=c;cx.fillStyle=c;cx.setLineDash([5,4]);cx.beginPath();cx.moveTo(0,y(p));cx.lineTo(w-pr,y(p));cx.stroke();cx.setLineDash([]);cx.fillText(t,6,y(p)-3)};
+ if(pos){line(pos.avg,col("--ln"),"均價 "+fm(pos.avg));line(lq,col("--dn"),"強平 "+fm(lq))}
+ line(price(),col("--ac"),"");
+ cx.fillStyle=col("--ac");cx.fillText(fm(price()),w-pr+4,y(price())+4);
+}
+
+function render(){
+ const p=price(),u=upnl(),e=equity(),lq=liq();
+ $("px").textContent=fm(p);$("tm").textContent="BTC · "+fmt(C[idx].t)+" UTC";
+ $("eq").textContent=fm(e,2);$("bal").textContent=fm(bal,2);
+ $("up").textContent=(u>=0?"+":"")+fm(u,2);$("up").className=u>=0?"up":"dn";
+ $("av").textContent=fm(avail(),2);
+ $("ps").textContent=pos?`${pos.s>0?"多":"空"} ${pos.q.toFixed(4)} @ ${fm(pos.avg)}`:"空手";
+ $("lq").textContent=lq?fm(lq):"-";
+ $("prog").textContent=`進度 ${Math.max(0,idx-(end-W))}/${W}`;
+ $("bl").disabled=$("bs").disabled=!!pos||over;$("cl").disabled=!pos||over;
+ document.querySelectorAll(".roll").forEach(b=>b.disabled=!pos||over||u<=0);
+ $("step").disabled=over;$("play").disabled=over;
+ draw();
+}
+
+$("play").onclick=play;$("step").onclick=()=>{stop();do tick();while(!over&&sub<S)};
+$("new").onclick=()=>start();
+const at=d=>Math.max(HIST,C.findIndex(c=>c.t>=Date.parse(d)));
+$("crash").onclick=()=>start(at("2025-10-03"));$("bull").onclick=()=>start(at("2024-11-01"));
+$("bl").onclick=()=>open(1);$("bs").onclick=()=>open(-1);$("cl").onclick=closeAll;
+document.querySelectorAll(".roll").forEach(b=>b.onclick=()=>roll(+b.dataset.r));
+$("lev").oninput=e=>$("levv").textContent=e.target.value+"x";
+$("spd").onchange=()=>{if(timer){stop();play()}};
+addEventListener("resize",()=>render());
+start();
+</script>
+</body>
+</html>
